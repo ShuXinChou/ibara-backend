@@ -295,7 +295,7 @@ function buildTextToImagePrompt(inputText, style) {
   ].join("\n");
 }
 
-async function generateTextToImage({ inputText, style }) {
+async function generateTextToImage({ inputText, style, size }) {
   const prompt = buildTextToImagePrompt(inputText, style);
 
   const response = await fetch(
@@ -320,7 +320,7 @@ async function generateTextToImage({ inputText, style }) {
           prompt_extend: true,
           watermark: false,
           n: 1,
-          size: "1280*1280",
+          size,
           negative_prompt:
             "text, letters, logo, watermark, blurry details, low quality, distorted hands, duplicated body parts, malformed face, frame, collage, split panels"
         }
@@ -543,13 +543,13 @@ app.post("/generate-poster-quote", async (req, res) => {
 
 app.post("/generate-text-to-image", async (req, res) => {
   try {
-    const { inputText, style } = req.body;
+    const { inputText, style, size } = req.body;
 
-    if (!inputText || !style) {
+    if (!inputText || !style || !size) {
       return res.status(400).json({ error: "Missing parameters" });
     }
 
-    const result = await generateTextToImage({ inputText, style });
+    const result = await generateTextToImage({ inputText, style, size });
     return res.json(result);
   } catch (err) {
     console.error("Text-to-image failed:", err);
