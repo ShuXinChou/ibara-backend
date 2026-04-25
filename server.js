@@ -17,6 +17,8 @@ const DASHSCOPE_API_KEY = process.env.DASHSCOPE_API_KEY;
 const DASHSCOPE_MODEL = process.env.DASHSCOPE_MODEL || "qwen-plus";
 const DASHSCOPE_VISION_MODEL =
   process.env.DASHSCOPE_VISION_MODEL || "qwen-vl-plus";
+const DASHSCOPE_T2I_MODEL =
+  process.env.DASHSCOPE_T2I_MODEL || "wan2.6-t2i";
 
 if (!DASHSCOPE_API_KEY) {
   console.error("Missing DASHSCOPE_API_KEY");
@@ -269,6 +271,86 @@ function fallbackPosterQuote(inputText, theme) {
   }
 }
 
+function imageStylePreset(style) {
+  switch (style) {
+    case "cinematic":
+      return "cinematic still, dramatic lighting, deep contrast, premium composition, rich details, no text in image";
+    case "illustrated":
+      return "high-end digital illustration, painterly details, expressive colors, polished composition, no text in image";
+    default:
+      return "dreamy fine-art photography, soft natural light, elegant atmosphere, realistic details, no text in image";
+  }
+}
+
+function buildTextToImagePrompt(inputText, style) {
+  const cleanedInput = String(inputText || "").trim();
+  const stylePreset = imageStylePreset(style);
+
+  return [
+    cleanedInput,
+    "",
+    `Style guide: ${stylePreset}.`,
+    "Please generate a single high-quality image based on the user's description.",
+    "Avoid any visible words, letters, logos, watermarks, borders, or UI elements."
+  ].join("\n");
+}
+
+async function generateTextToImage({ inputText, style }) {
+  const prompt = buildTextToImagePrompt(inputText, style);
+
+  const response = await fetch(
+    "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${DASHSCOPE_API_KEY}`
+      },
+      body: JSON.stringify({
+        model: DASHSCOPE_T2I_MODEL,
+        input: {
+          messages: [
+            {
+              role: "user",
+              content: [{ text: prompt }]
+            }
+          ]
+        },
+        parameters: {
+          prompt_extend: true,
+          watermark: false,
+          n: 1,
+          size: "1280*1280",
+          negative_prompt:
+            "text, letters, logo, watermark, blurry details, low quality, distorted hands, duplicated body parts, malformed face, frame, collage, split panels"
+        }
+      })
+    }
+  );
+
+  const raw = await response.text();
+  console.log("TextToImage:", raw);
+
+  if (!response.ok) {
+    throw new Error(raw);
+  }
+
+  const data = JSON.parse(raw);
+  const content = data?.output?.choices?.[0]?.message?.content;
+  const imagePart = Array.isArray(content)
+    ? content.find((item) => item?.type === "image" && item?.image)
+    : null;
+
+  if (!imagePart?.image) {
+    throw new Error("No image URL returned from DashScope");
+  }
+
+  return {
+    imageURL: imagePart.image,
+    size: data?.usage?.size || "1280*1280"
+  };
+}
+
 async function generateQuotes({ inputText, preferredStyle }) {
   const systemPrompt = `
 Write exactly 3 short Arabic quotes.
@@ -456,6 +538,25 @@ app.post("/generate-poster-quote", async (req, res) => {
   } catch (err) {
     console.error(err);
     return res.json({ quote: fallbackPosterQuote(req.body?.inputText, req.body?.theme) });
+  }
+});
+
+app.post("/generate-text-to-image", async (req, res) => {
+  try {
+    const { inputText, style } = req.body;
+
+    if (!inputText || !style) {
+      return res.status(400).json({ error: "Missing parameters" });
+    }
+
+    const result = await generateTextToImage({ inputText, style });
+    return res.json(result);
+  } catch (err) {
+    console.error("Text-to-image failed:", err);
+    return res.status(500).json({
+      error: "Image generation failed",
+      details: err.message || String(err)
+    });
   }
 });
 
